@@ -9,6 +9,11 @@
 //===----------------------------------------------------------------------===//
 namespace llvm {
     class Value;
+    class Module;
+    namespace orc
+    {
+        class KaleidoscopeJIT;
+    }
 }
 /// ExprAST - Base class for all expression nodes.
     class ExprAST {
@@ -86,3 +91,11 @@ namespace llvm {
         llvm::Value *codegen();
     };
 
+void InitModule();
+void PrintGeneratedCode();
+
+
+void InitializeModuleAndPassManager(llvm::orc::KaleidoscopeJIT* TheJIT = nullptr);
+
+std::unique_ptr<llvm::Module> GetCurrentModule();
+void AddFuncProto(const std::string &basicString, std::unique_ptr<PrototypeAST> uniquePtr);

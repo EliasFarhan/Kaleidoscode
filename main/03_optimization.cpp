@@ -95,7 +95,7 @@ int main() {
     // Prime the first token.
     std::cout <<"ready> ";
     getNextToken();
-    InitModule();
+    InitializeModuleAndPassManager();
     // Run the main "interpreter loop" now.
     MainLoop();
     PrintGeneratedCode();

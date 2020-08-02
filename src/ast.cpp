@@ -1,6 +1,8 @@
 //
 // Created by efarhan on 02.08.20.
 //
+#include <llvm/Transforms/Scalar.h>
+#include <jit.h>
 #include "llvm/ADT/APFloat.h"
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/IR/BasicBlock.h"
@@ -13,6 +15,10 @@
 #include "llvm/IR/Type.h"
 #include "llvm/IR/Verifier.h"
 
+#include "llvm/IR/LegacyPassManager.h"
+#include "llvm/Transforms/InstCombine/InstCombine.h"
+#include "llvm/Transforms/Scalar/GVN.h"
+
 #include "ast.h"
 
 #include "log.h"
@@ -23,6 +29,24 @@ static LLVMContext TheContext;
 static IRBuilder<> Builder(TheContext);
 static std::unique_ptr<Module> TheModule;
 static std::map<std::string, Value *> NamedValues;
+static std::unique_ptr<legacy::FunctionPassManager> TheFPM;
+static std::map<std::string, std::unique_ptr<PrototypeAST>> FunctionProtos;
+
+Function *getFunction(const std::string& Name) {
+    // First, see if the function has already been added to the current module.
+    if (auto *F = TheModule->getFunction(Name))
+        return F;
+
+    // If not, check whether we can codegen the declaration from some existing
+    // prototype.
+    auto FI = FunctionProtos.find(Name);
+    if (FI != FunctionProtos.end())
+        return static_cast<Function *>(FI->second->codegen());
+
+    // If no existing prototype exists, return null.
+    return nullptr;
+}
+
 
 Value *LogErrorV(const char *Str) {
     LogError(Str);
@@ -65,7 +89,7 @@ llvm::Value *BinaryExprAST::codegen() {
 
 llvm::Value *CallExprAST::codegen() {
     // Look up the name in the global module table.
-    Function *CalleeF = TheModule->getFunction(Callee);
+    Function *CalleeF = getFunction(Callee);
     if (!CalleeF)
         return LogErrorV("Unknown function referenced");
 
@@ -103,11 +127,9 @@ llvm::Value *PrototypeAST::codegen() {
 
 llvm::Value *FunctionAST::codegen() {
     // First, check for an existing function from a previous 'extern' declaration.
-    Function *TheFunction = TheModule->getFunction(Proto->getName());
-
-    if (!TheFunction)
-        TheFunction = static_cast<Function *>(Proto->codegen());
-
+    auto &P = *Proto;
+    FunctionProtos[Proto->getName()] = std::move(Proto);
+    Function *TheFunction = getFunction(P.getName());
     if (!TheFunction)
         return nullptr;
 
@@ -128,10 +150,51 @@ llvm::Value *FunctionAST::codegen() {
 
         // Validate the generated code, checking for consistency.
         verifyFunction(*TheFunction);
+        // Optimize the function.
+        if(TheFPM)
+            TheFPM->run(*TheFunction);
 
         return TheFunction;
     }
     // Error reading body, remove function.
     TheFunction->eraseFromParent();
     return nullptr;
+}
+void InitModule() {
+    // Make the module, which holds all the code.
+    TheModule = std::make_unique<Module>("my cool jit", TheContext);
+
+}
+
+void PrintGeneratedCode() {
+    // Print out all of the generated code.
+    TheModule->print(errs(), nullptr);
+}
+
+void InitializeModuleAndPassManager(llvm::orc::KaleidoscopeJIT* TheJIT) {
+    // Open a new module.
+    TheModule = std::make_unique<Module>("my cool jit", TheContext);
+    if(TheJIT != nullptr)
+        TheModule->setDataLayout(TheJIT->getTargetMachine().createDataLayout());
+    // Create a new pass manager attached to it.
+    TheFPM = std::make_unique<llvm::legacy::FunctionPassManager>(TheModule.get());
+
+    // Do simple "peephole" optimizations and bit-twiddling optzns.
+    TheFPM->add(llvm::createInstructionCombiningPass());
+    // Reassociate expressions.
+    TheFPM->add(llvm::createReassociatePass());
+    // Eliminate Common SubExpressions.
+    TheFPM->add(llvm::createGVNPass());
+    // Simplify the control flow graph (deleting unreachable blocks, etc).
+    TheFPM->add(llvm::createCFGSimplificationPass());
+
+    TheFPM->doInitialization();
+}
+
+std::unique_ptr<llvm::Module> GetCurrentModule() {
+    return std::move(TheModule);
+}
+
+void AddFuncProto(const std::string &basicString, std::unique_ptr<PrototypeAST> uniquePtr) {
+    FunctionProtos[basicString] = std::move(uniquePtr);
 }

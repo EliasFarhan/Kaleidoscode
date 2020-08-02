@@ -7,7 +7,11 @@ message(STATUS "Found LLVM ${LLVM_PACKAGE_VERSION}")
 file(GLOB_RECURSE Kaleidoscope_SRC src/*.cpp include/*.h)
 add_library(Kaleidoscope STATIC ${Kaleidoscope_SRC})
 target_include_directories(Kaleidoscope PUBLIC include/ ${LLVM_INCLUDE_DIRS})
-target_link_libraries(Kaleidoscope ${LLVM_LIBRARIES})
+if (LLVM IN_LIST LLVM_AVAILABLE_LIBS)
+    target_link_libraries(Kaleidoscope PUBLIC LLVM)
+else()
+    target_link_libraries(Kaleidoscope PUBLIC LLVMSupport)
+endif()
 
 
 set(main_project_dir "main/")
